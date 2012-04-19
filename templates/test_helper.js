@@ -1,4 +1,8 @@
 var app = require('railway').createServer();
+app.enable('quiet');
+app.enable('models cache');
+app.enable('eval cache');
+
 
 exports.controller = function (controllerName, exp) {
 
@@ -7,7 +11,6 @@ exports.controller = function (controllerName, exp) {
     // trick
     it('init', function (test) { process.nextTick(function () { test.done(); }); });
     var nu = process.env.NODEUNIT_PATH || 'nodeunit';
-    console.log(nu);
 
     var http = require('http');
     var sinon  = require('sinon');
@@ -81,10 +84,8 @@ exports.controller = function (controllerName, exp) {
             var test = this;
             var origDone = test.done;
             test.done = function () {
-                console.log('call', n);
                 if (--n === 0) {
                     test.done = origDone;
-                    console.log('hey');
                     test.done();
                 }
             }.bind(this);
@@ -93,11 +94,12 @@ exports.controller = function (controllerName, exp) {
         return test;
     };
 
-    app.enable('quiet');
-    app.enable('models cache');
+    var cookies = {};
+    var csrfToken = '';
 
-    function stubRequest (method, _method) {
+    function stubRequest(method, _method) {
         return function (url, callback) {
+
             var req = new http.IncomingMessage;
             var res = new http.ServerResponse({method: 'NOTHEAD'});
 
@@ -105,12 +107,13 @@ exports.controller = function (controllerName, exp) {
             res.send     = sinon.spy(res.send);
             res.redirect = sinon.spy(res.redirect);
             res.headers  = {};
-            res.header   = function (header, value) {
+            res.setHeader = res.header = function (header, value) {
                 res.headers[header.toLowerCase()] = value;
             };
 
             req.headers  = {
-                host:'localhost'
+                host:'localhost',
+                cookie: cookieString(cookies)
             };
 
             req.flash    = sinon.spy(req.flash);
@@ -119,27 +122,41 @@ exports.controller = function (controllerName, exp) {
             req.method   = method;
 
             if (method === 'POST') {
-                if (typeof callback === 'object')
-                {
+                if (typeof callback === 'object') {
                     req.body = callback;
                     callback = arguments[2];
                 }
 
-                if (_method)
-                {
+                if (_method) {
                     req.body._method = _method;
                 }
+
+                req.body.authenticity_token = csrfToken;
+
             }
 
             res.end = function () {
                 this.req = req;
                 this.res = res;
+                if (res.headers['set-cookie']) {
+                    var c = res.headers['set-cookie'].split(';').shift().split('=');
+                    cookies[c[0]] = c[1];
+                }
+                csrfToken = req.csrfToken;
                 callback.call(this);
             }.bind(this);
 
             app.handle(req, res);
         }
     };
+
+    function cookieString(obj) {
+        var s = [];
+        Object.keys(obj).forEach(function (val) {
+            s.push(val + '=' + obj[val]);
+        });
+        return s.join('; ');
+    }
 
 };
 
